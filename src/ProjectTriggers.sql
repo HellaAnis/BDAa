@@ -92,6 +92,7 @@ BEGIN
     END IF;
 
     select nomequipe into equipeUtlisateur from equipe where equipe.id = new.equipe_id;
+
     IF myrec <> new.equipe_id THEN
         RAISE EXCEPTION 'l utilisateur n est pas un membre de l equipe --> %', equipeUtlisateur
             USING HINT = 'Il doit etre un membre de cette equipe ';
@@ -118,8 +119,11 @@ $$
 DECLARE
 
 BEGIN
-    insert into parametres(datefin, bute, ts, projet_id) values (new.datefin, new.bute, current_timestamp, new.id);
+--     IF (new.bute <> OLD.bute) or (NEW.datefin <> OLD.datefin) THEN
+        insert into parametres(datefin, bute, ts, projet_id) values (new.datefin, new.bute, current_timestamp, new.id);
+--     end if;
     RETURN NEW;
+
 END;
 $$
     LANGUAGE 'plpgsql';
@@ -138,16 +142,16 @@ EXECUTE PROCEDURE Historique();
 CREATE OR REPLACE FUNCTION audit_projet() RETURNS TRIGGER AS
 $emp_audit$
 DECLARE
-    commission numeric;
+    commission    numeric;
     sommecollecte numeric;
 
 BEGIN
 
     IF (TG_OP = 'DELETE') THEN
         RAISE NOTICE 'DELETE %',old.id;
-
-    delete from parametres where parametres.projet_id = old.id;
-    if old.sommecollecte < 0 then
+        delete from parametres where parametres.projet_id = old.id;
+        delete from archivagestatue where archivagestatue.projet_id =old.id;
+        if old.sommecollecte < 0 then
             raise exception 'vous devez payer voter commision avant de supprimer votre projet';
         end if;
         RETURN OLD;
@@ -156,14 +160,14 @@ BEGIN
         RAISE NOTICE '%',old.sommecollecte;
         RAISE NOTICE '%',old.commission;
         RAISE NOTICE '%',old.bute;
-        commission = (new.bute* 5) / 100;
+        commission = (new.bute * 5) / 100;
         new.commission = commission;
-        new.sommecollecte =new.sommecollecte-(commission-old.commission);
+        new.sommecollecte = new.sommecollecte - (commission - old.commission);
         RAISE NOTICE 'La commission de se projet est : --> %€', commission;
         RETURN NEW;
     ELSIF (TG_OP = 'INSERT') THEN
         RAISE NOTICE 'INSERT';
-        commission = ((new.bute)* 5) / 100;
+        commission = ((new.bute) * 5) / 100;
         new.investiseuractuel = 0;
         new.projetstatue_id = 1;
         new.commission = commission;
@@ -185,27 +189,88 @@ EXECUTE PROCEDURE audit_projet();
 
 
 
-CREATE OR REPLACE FUNCTION audit_archivage() RETURNS TRIGGER AS $emp_audit$
+CREATE OR REPLACE FUNCTION audit_archivage() RETURNS TRIGGER AS
+$emp_audit$
+declare
+    pourcentage numeric;
+
 BEGIN
-    --
-    -- Ajoute une ligne dans emp_audit pour refléter l'opération réalisée
-    -- sur emp,
-    -- utilise la variable spéciale TG_OP pour cette opération.
-    --
+    pourcentage = (new.sommecollecte / new.bute) * 100;
+    RAISE NOTICE 'pourcentage %',pourcentage;
+
     IF (TG_OP = 'DELETE') THEN
-        INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;
-        RETURN OLD;
+--         INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;
+--         RETURN OLD;
     ELSIF (TG_OP = 'UPDATE') THEN
-        insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id,current_timestamp,new.projetstatue_id);
+        if (pourcentage <= 0) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 1);
+        elsif (pourcentage > 1 and pourcentage < 10) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 2);
+        elsif (pourcentage > 10 and pourcentage < 50) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 3);
+        elsif (pourcentage = 50) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 4);
+        elsif (pourcentage >50 and pourcentage<100 ) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 5);
+        elsif (pourcentage >= 100) then
+            insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 6);
+        end if;
         RETURN NEW;
     ELSIF (TG_OP = 'INSERT') THEN
-        insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id,current_timestamp,new.projetstatue_id);
+        insert into archivagestatue(projet_id, ts, projetstatue_id) values (new.id, current_timestamp, 1);
         RETURN NEW;
     END IF;
     RETURN NULL; -- le résultat est ignoré car il s'agit d'un trigger AFTER
 END;
 $emp_audit$ language plpgsql;
 
+drop trigger archivageAudit_trigger on projet;
 CREATE TRIGGER archivageAudit_trigger
-    AFTER INSERT OR UPDATE OR DELETE ON projet
-    FOR EACH ROW EXECUTE PROCEDURE audit_archivage();
+    AFTER INSERT OR UPDATE
+    ON projet
+    FOR EACH ROW
+EXECUTE PROCEDURE audit_archivage();
+
+
+
+CREATE OR REPLACE FUNCTION rembourcement()
+    RETURNS trigger AS
+$$
+DECLARE
+    r investissement%ROWTYPE;
+    val            integer;
+    roleUtlisateur varchar(15);
+BEGIN
+
+    FOR r IN
+        SELECT *
+        FROM investissement m
+        where  m.projet_id=old.id
+        ORDER BY m.id, m.utilisateur_id
+--     select investissement.id into from investissement where investissement.utilisateur_id = 1;
+    LOOP
+--     delete from investissement where investissement.id=r.id;
+    raise notice 'id % ',r.id;
+
+    if old.sommecollecte < old.bute then
+    insert into rembourcement (sommerembource, ts, utilisateur_id) values
+                    (r.sommeengage,now(),r.utilisateur_id);
+    end if;
+
+    delete from investissement where investissement.id = r.id;
+
+    END LOOP;
+
+
+    RETURN old;
+END;
+$$
+    LANGUAGE 'plpgsql';
+
+drop trigger rembourcement_trigger on projet;
+
+CREATE TRIGGER rembourcement_trigger
+   before delete
+    ON projet
+    FOR EACH ROW
+EXECUTE PROCEDURE rembourcement();
