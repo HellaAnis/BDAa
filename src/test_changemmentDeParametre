@@ -1,0 +1,3 @@
+--tester le changemment des parametres
+update projet
+SET bute = 1600 where id=1;

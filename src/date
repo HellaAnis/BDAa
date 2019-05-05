@@ -1,0 +1,60 @@
+CREATE TABLE dateTable (
+                           id   SERIAL PRIMARY KEY,
+                           date TIMESTAMP
+);
+
+INSERT INTO dateTable (id, date)
+VALUES (1, now());
+
+update dateTable set date ='21/11/2019' where id=1;
+
+SELECT *
+FROM dateTable;
+
+-------------Fonction qui retourne la date d'aujourd'hui--------------
+
+CREATE OR REPLACE FUNCTION getDateNow()
+    RETURNS TIMESTAMP AS $$
+DECLARE d TIMESTAMP;
+BEGIN
+    SELECT date INTO d FROM dateTable WHERE id = 1;
+    RETURN d;
+END;
+
+$$
+    LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION dateLimite()
+    RETURNS trigger AS
+$$
+DECLARE
+    r              projet%ROWTYPE;
+    datelimit     timestamp;
+BEGIN
+  SELECT new.date INTO datelimit FROM dateTable WHERE id = 1;
+  raise notice 'la date d aujourd''hui % ',datelimit;
+
+  FOR r IN
+        SELECT *
+        FROM projet m
+        where m.datefin < datelimit
+        ORDER BY m.id, m.utilisateur_id
+        LOOP
+            raise notice 'id % ',r.id;
+            if (r.sommecollecte>=0) then
+            delete from projet where projet.id = r.id;
+            end if;
+        END LOOP;
+    RETURN old;
+END;
+$$
+    LANGUAGE 'plpgsql';
+
+drop trigger rembourcement_trigger on projet;
+
+CREATE TRIGGER dateLimite_trigger
+    after update
+    ON datetable
+    FOR EACH ROW
+EXECUTE PROCEDURE dateLimite();

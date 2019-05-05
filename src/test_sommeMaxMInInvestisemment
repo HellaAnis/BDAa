@@ -1,0 +1,3 @@
+--investissement avec somme > somme max de l'option
+insert into investissement(sommeengage, ts, projet_investissement_option_id, utilisateur_id, projet_id)
+values ('300', now(), 2, 1, 3);

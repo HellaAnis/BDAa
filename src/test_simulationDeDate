@@ -1,0 +1,2 @@
+-- --simulation de la date
+update dateTable set date ='21/11/2019' where id=1;
